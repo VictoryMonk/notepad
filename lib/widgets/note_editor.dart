@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 import '../models/note.dart';
 import '../storage/note_storage.dart';
 
@@ -14,6 +16,9 @@ class NoteEditor extends StatefulWidget {
 }
 
 class _NoteEditorState extends State<NoteEditor> {
+  String? _summary;
+  bool _isSummarizing = false;
+  final String _googleApiKey = 'AIzaSyCzjDQ9dXCP5K08_kFpwL0D94ZkP-qtUVo';
   late String _noteId;
   late TextEditingController _titleController;
   late TextEditingController _contentController;
@@ -55,6 +60,59 @@ class _NoteEditorState extends State<NoteEditor> {
   Future<bool> _onWillPop() async {
     _saveNote();
     return true;
+  }
+
+  Future<void> _summarizeNote() async {
+    setState(() {
+      _isSummarizing = true;
+      _summary = null;
+    });
+    final url = Uri.parse(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=$_googleApiKey',
+    );
+    final prompt = _contentController.text.trim();
+    if (prompt.isEmpty) {
+      setState(() {
+        _summary = 'Note is empty, nothing to summarize.';
+        _isSummarizing = false;
+      });
+      return;
+    }
+    try {
+      final response = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'contents': [
+            {
+              'parts': [
+                {'text': 'Summarize this note: $prompt'}
+              ]
+            }
+          ]
+        }),
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        // Gemini returns summary in data['candidates'][0]['content']['parts'][0]['text']
+        final summary = data['candidates']?[0]?['content']?['parts']?[0]?['text'] ?? 'No summary generated.';
+        setState(() {
+          _summary = summary;
+        });
+      } else {
+        setState(() {
+          _summary = 'Failed to summarize: ${response.reasonPhrase}';
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _summary = 'Error: $e';
+      });
+    } finally {
+      setState(() {
+        _isSummarizing = false;
+      });
+    }
   }
 
   void _saveNote() {
@@ -180,9 +238,32 @@ class _NoteEditorState extends State<NoteEditor> {
                     }).toList(),
                   ),
                 ],
+                const SizedBox(height: 24),
+                if (_isSummarizing)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 16.0),
+                    child: CircularProgressIndicator(),
+                  ),
+                if (_summary != null)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Summary:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                        const SizedBox(height: 4),
+                        Text(_summary!),
+                      ],
+                    ),
+                  ),
               ],
             ),
           ),
+        ),
+        floatingActionButton: FloatingActionButton.extended(
+          onPressed: _isSummarizing ? null : _summarizeNote,
+          icon: const Icon(Icons.summarize),
+          label: const Text('Summarize'),
         ),
       ),
     );
