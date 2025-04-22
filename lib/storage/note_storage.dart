@@ -84,7 +84,6 @@ class NoteStorage {
   static Future<void> moveToBin(String noteId) async {
     try {
       final notesDir = await _notesDir;
-      final binDir = await _binDir;
       final noteDir = Directory('${notesDir.path}/$noteId');
       if (noteDir.existsSync()) {
         final noteJsonFile = File('${noteDir.path}/note.json');
@@ -102,9 +101,7 @@ class NoteStorage {
 
   static Future<void> restoreFromBin(String noteId) async {
     try {
-      final binDir = await _binDir;
-      final notesDir = await _notesDir;
-      final noteDir = Directory('${binDir.path}/$noteId');
+      final noteDir = Directory('${(await _binDir).path}/$noteId');
       if (noteDir.existsSync()) {
         final noteJsonFile = File('${noteDir.path}/note.json');
         if (noteJsonFile.existsSync()) {

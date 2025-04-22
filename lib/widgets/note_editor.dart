@@ -16,6 +16,10 @@ class NoteEditor extends StatefulWidget {
 }
 
 class _NoteEditorState extends State<NoteEditor> {
+  List<Map<String, String>> _chatMessages = [];
+  final TextEditingController _questionController = TextEditingController();
+  bool _isAwaitingResponse = false;
+
   String? _summary;
   bool _isSummarizing = false;
   final String _googleApiKey = 'AIzaSyCzjDQ9dXCP5K08_kFpwL0D94ZkP-qtUVo';
@@ -44,7 +48,7 @@ class _NoteEditorState extends State<NoteEditor> {
     _titleController = TextEditingController(text: widget.note?.title ?? '');
     _contentController = TextEditingController(text: widget.note?.content ?? '');
     _isPinned = widget.note?.isPinned ?? false;
-    _color = widget.note?.color ?? Colors.grey;
+    _color = widget.note?.color ?? const Color(0xFF181C20);
     _imagePaths = List.from(widget.note?.imagePaths ?? []);
   }
 
@@ -138,17 +142,64 @@ class _NoteEditorState extends State<NoteEditor> {
   void dispose() {
     _titleController.dispose();
     _contentController.dispose();
+    _questionController.dispose();
     super.dispose();
   }
+
+  Future<void> _sendQuestion() async {
+    final question = _questionController.text.trim();
+    if (question.isEmpty) return;
+    setState(() {
+      _chatMessages.add({'role': 'user', 'text': question});
+      _isAwaitingResponse = true;
+      _questionController.clear();
+    });
+    final aiResponse = await _askGemini(question, context: _summary ?? _contentController.text);
+    setState(() {
+      _chatMessages.add({'role': 'ai', 'text': aiResponse});
+      _isAwaitingResponse = false;
+    });
+  }
+
+  Future<String> _askGemini(String question, {required String context}) async {
+    final url = Uri.parse(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=$_googleApiKey',
+    );
+    try {
+      final response = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'contents': [
+            {
+              'parts': [
+                {'text': 'Context: $context\nQuestion: $question'}
+              ]
+            }
+          ]
+        }),
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final answer = data['candidates']?[0]?['content']?['parts']?[0]?['text'] ?? 'No answer generated.';
+        return answer;
+      } else {
+        return 'Failed to get answer: ${response.reasonPhrase}';
+      }
+    } catch (e) {
+      return 'Error: $e';
+    }
+  }
+
 
   @override
   Widget build(BuildContext context) {
     return WillPopScope(
       onWillPop: _onWillPop,
       child: Scaffold(
-        backgroundColor: const Color(0xFF181C20),
+        backgroundColor: _color,
         appBar: AppBar(
-          backgroundColor: const Color(0xFF181C20),
+          backgroundColor: _color,
           elevation: 0,
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
@@ -205,21 +256,21 @@ class _NoteEditorState extends State<NoteEditor> {
               children: [
                 TextField(
                   controller: _titleController,
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     hintText: 'Title',
                     border: InputBorder.none,
                     filled: true,
-                    fillColor: Color(0xFF181C20),
+                    fillColor: _color,
                   ),
                   style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                 ),
                 TextField(
                   controller: _contentController,
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     hintText: 'Note',
                     border: InputBorder.none,
                     filled: true,
-                    fillColor: Color(0xFF181C20),
+                    fillColor: _color,
                   ),
                   maxLines: null,
                 ),
@@ -253,6 +304,68 @@ class _NoteEditorState extends State<NoteEditor> {
                         const Text('Summary:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                         const SizedBox(height: 4),
                         Text(_summary!),
+                        const SizedBox(height: 16),
+                        // Chat UI
+                        const Text('Ask AI:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                        const SizedBox(height: 4),
+                        Container(
+                          height: 180,
+                          padding: const EdgeInsets.all(8.0),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.05),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: _chatMessages.isEmpty
+                              ? const Center(child: Text('No conversation yet.'))
+                              : ListView(
+                                  children: _chatMessages.map((msg) {
+                                    final isUser = msg['role'] == 'user';
+                                    return Align(
+                                      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+                                      child: Container(
+                                        margin: const EdgeInsets.symmetric(vertical: 4),
+                                        padding: const EdgeInsets.all(10),
+                                        decoration: BoxDecoration(
+                                          color: isUser ? Colors.blue[200] : Colors.grey[850],
+                                          borderRadius: BorderRadius.circular(10),
+                                        ),
+                                        child: Text(
+  msg['text'] ?? '',
+  style: TextStyle(color: isUser ? Colors.black : Colors.white),
+),
+                                      ),
+                                    );
+                                  }).toList(),
+                                ),
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _questionController,
+                                enabled: !_isAwaitingResponse,
+                                decoration: const InputDecoration(
+                                  hintText: 'Ask a question...',
+                                  border: OutlineInputBorder(),
+                                  isDense: true,
+                                ),
+                                onSubmitted: (_) => _sendQuestion(),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            ElevatedButton(
+                              onPressed: _isAwaitingResponse ? null : _sendQuestion,
+                              child: _isAwaitingResponse
+                                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                                  : const Icon(Icons.send),
+                              style: ElevatedButton.styleFrom(
+                                shape: const CircleBorder(),
+                                padding: const EdgeInsets.all(12),
+                              ),
+                            ),
+                          ],
+                        ),
                       ],
                     ),
                   ),
